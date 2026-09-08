@@ -61,8 +61,7 @@ against.
 
 ## Skill: Swap the LLM provider
 
-**When:** Changing from OpenAI to Anthropic, a local Ollama model, or
-similar in `agent/main.py`.
+**When:** Changing LLM providers (e.g. Google Gemini Flash via OpenAI-compatible endpoint, direct OpenAI, Anthropic, or a local Ollama model) in `agent/main.py`.
 
 **Steps:**
 1. The LLM is wired into the `AgentSession` in `agent/main.py`. Swap the
@@ -136,14 +135,13 @@ case confirms isolation.
 ## Skill: Add a new language beyond Hindi/English
 
 **When:** Extending Sangam past its current Hindi/English (Hinglish)
-scope — e.g. adding Tamil, Bengali, or another Arcana-supported language
+scope — e.g. adding Tamil, Bengali, or another Rime-supported language
 relevant to a different regional deployment.
 
 **Steps:**
-1. Confirm Rime Arcana supports the target language and has a
-   code-switching-capable voice for it — check the live catalog, don't
-   assume. As of this submission, Arcana v3 supports English, Spanish,
-   French, German, Hebrew, Hindi, Japanese, Portuguese, Arabic, and Tamil.
+1. Confirm Rime (Coda or Arcana) supports the target language and has a
+   verified voice for it in the live catalog — check the live catalog, don't
+   assume. Verify language tags and regional accents before deploying.
 2. `language_tracker.py`'s `Lang` enum needs a new member, and
    `naive_language_tag()` in `main.py` needs a detection path for the new
    language. If the target language has its own script (e.g. Tamil,

@@ -13,7 +13,8 @@ proving two hard voice-engineering claims:
 1. **Code-switch detection at the clause level** — real bilingual callers
    mix languages mid-sentence. The system tracks language state
    per-segment, not per-call, and mirrors the caller's actual switching
-   pattern via Rime Arcana's native code-switching.
+   pattern via Rime Coda's native Indian Hindi voice (Taru) with natural
+   inline Hinglish maintenance phrasing.
 2. **Session continuity across dropped calls** — telephony drops calls
    constantly. Task progress and language state persist per caller phone
    number and resume on callback within a 3-minute window.
@@ -28,15 +29,19 @@ agent/
   main.py              LiveKit agent entrypoint — wires everything together
   language_tracker.py  Core code-switch detection logic (the main claim)
   session_state.py     SQLite-backed call recovery
-  rime_client.py        Rime TTS wrapper: observability + disclosed fallback
+  rime_client.py        Rime TTS wrapper: observability + centralized voice config
   prompts.py            System prompt construction, language mirroring
+  cancellation.py       Graceful async task cancellation & barge-in handling
 eval/
   fixtures.jsonl        Code-switch stress-test fixtures (the acceptance test)
   run_eval.py            Runs fixtures against the REAL LanguageTracker
 tests/
   test_session_recovery.py   pytest suite for the recovery claim
+  test_interruption.py       pytest suite for task interruption and cleanup
 infra/
+  setup_telephony.py    Twilio + LiveKit SIP trunk provisioning script
   twilio_setup.md        Telephony wiring notes
+call_me.py              CLI helper to dispatch outbound phone call via LiveKit SIP
 smoke_test_rime.py       Standalone Rime API key/voice sanity check
 README.md                Architecture, setup, exact Rime config
 RIME_EVIDENCE.md         Acceptance test, procedure, results, limitations
@@ -70,9 +75,10 @@ RIME_EVIDENCE.md         Acceptance test, procedure, results, limitations
 5. **Rime model/voice/language must match the live catalog.** Don't trust
    a hardcoded speaker name without verifying it against Rime's current
    catalog — the hackathon rules explicitly penalize a stale speaker list
-   that fails preflight. Model in use: `arcana` (native multilingual
-   code-switching). Do not swap to Coda or Mist without updating
-   `README.md`'s rationale table — those don't code-switch.
+   that fails preflight. Model in use: `rime/coda` with voice `taru` (language `hi`).
+   LiveKit's inference gateway routes through Coda; `taru` provides an authentic
+   Indian Hindi cadence (unlike the American English `celeste` default).
+   Do not send `speedAlpha` controls as the Coda gateway rejects them.
 
 6. **`naive_language_tag()` in `main.py` is a known placeholder**, isolated
    deliberately so it can be swapped for a real language-ID classifier
@@ -98,7 +104,7 @@ pytest tests/ -v
 # Rime API connectivity + voice quality (needs RIME_API_KEY)
 python smoke_test_rime.py
 
-# Full agent (needs RIME_API_KEY, DEEPGRAM_API_KEY, LIVEKIT_URL/KEY/SECRET)
+# Full agent (needs RIME_API_KEY, DEEPGRAM_API_KEY, LIVEKIT_URL/KEY/SECRET, GOOGLE_API_KEY)
 python -m agent.main dev
 ```
 
