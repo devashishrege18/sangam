@@ -88,6 +88,57 @@ _ROMAN_HI_MARKERS = re.compile(
     r"bahut|zyada|kripya|dhanyavaad|namaste)\b", re.IGNORECASE
 )
 
+_ROOM_DIGITS = re.compile(r"\b(\d{2,4})\b")
+_HINDI_NUMBERS = {
+    "एक सौ एक": "101", "एक सौ दो": "102", "एक सौ तीन": "103", "एक सौ चार": "104", "एक सौ पांच": "105", "एक सौ छह": "106",
+    "दो सौ एक": "201", "दो सौ दो": "202", "दो सौ तीन": "203", "दो सौ चार": "204",
+    "तीन सौ एक": "301", "तीन सौ दो": "302", "तीन सौ तीन": "303", "तीन सौ चार": "304",
+    "चार सौ एक": "401", "चार सौ दो": "402", "चार सौ तीन": "403", "चार सौ चार": "404", "चार सौ पाँच": "405",
+}
+
+
+def extract_task_fields(text: str, state: dict) -> dict:
+    """Extract maintenance intake fields from user speech turns to persist in session state."""
+    updated = {}
+    lower_text = text.lower()
+
+    # Room / Unit number
+    if "room_number" not in state:
+        for hindi_phrase, num in _HINDI_NUMBERS.items():
+            if hindi_phrase in text:
+                updated["room_number"] = num
+                break
+        if "room_number" not in updated:
+            m = _ROOM_DIGITS.search(text)
+            if m:
+                updated["room_number"] = m.group(1)
+
+    # Issue Category
+    if "issue_category" not in state:
+        if any(w in lower_text or w in text for w in ["पानी", "paani", "leak", "plumbing", "pipe", "pipeline", "tap", "bathroom", "नल", "flush", "sink"]):
+            updated["issue_category"] = "plumbing"
+        elif any(w in lower_text or w in text for w in ["light", "power", "बिजली", "electric", "spark", "current", "switch", "wiring"]):
+            updated["issue_category"] = "electrical"
+        elif any(w in lower_text or w in text for w in ["ac", "cooling", "गर्मी", "cooler", "fan", "पंखा", "heating", "हीटर"]):
+            updated["issue_category"] = "heating_cooling"
+        elif any(w in lower_text or w in text for w in ["geyser", "गीजर", "fridge", "microwave", "washing machine", "appliance"]):
+            updated["issue_category"] = "appliance"
+
+    # Issue Description
+    if "issue_description" not in state and ("issue_category" in updated or "issue_category" in state):
+        updated["issue_description"] = text.strip()
+
+    # Urgency
+    if "urgency" not in state:
+        if any(w in lower_text or w in text for w in ["emergency", "इमरजेंसी", "flooding", "sparking", "आग", "धुआं", "खतरा"]):
+            updated["urgency"] = "emergency"
+        elif any(w in lower_text or w in text for w in ["urgent", "अर्urgent", "तुरंत", "जल्दी", "asap", "आज ही", "today"]):
+            updated["urgency"] = "urgent"
+        elif any(w in lower_text or w in text for w in ["routine", "normal", "नॉर्मल", "जब टाइम मिले"]):
+            updated["urgency"] = "routine"
+
+    return updated
+
 
 def naive_language_tag(text: str) -> tuple[Lang, float]:
     words = text.split()
@@ -189,6 +240,12 @@ class SangamAgent(Agent):
                 switch.from_lang, switch.to_lang, switch.trigger_segment, switch.confidence,
             )
 
+        # Extract maintenance intake fields from caller speech
+        extracted = extract_task_fields(text, self.task_state)
+        if extracted:
+            self.task_state.update(extracted)
+            logger.info("Task state updated: %s -> full task_state=%s", extracted, self.task_state)
+
         # Update instructions NOW — the LLM hasn't sent its first token yet.
         plan = self.tracker.response_language_plan()
         new_instructions = build_system_prompt(plan, self.task_state)
@@ -232,6 +289,12 @@ async def entrypoint(ctx: JobContext):
     await ctx.connect()
 
     phone_number = ctx.room.name  # configure Twilio dispatch rule to set room name = caller number
+    # LiveKit Playground / Cloud Console generates randomized room names (e.g. 'console-f9ef3afe').
+    # Map console-* rooms to a shared test identity so dropped-call recovery works
+    # seamlessly during browser playground demos and restarts!
+    if phone_number.startswith("console-"):
+        phone_number = "dev-caller-playground"
+
     call_sid = ctx.job.id
 
     recovered = store.load_or_start(phone_number, call_sid)
@@ -291,11 +354,17 @@ async def entrypoint(ctx: JobContext):
 
     # Opening / recovery greeting — session.say() streams into the pipeline.
     if recovered.is_recovery:
-        resume_text = (
-            "आपकी maintenance request वहीं से शुरू करते हैं जहाँ हम रुके थे।"
-            if tracker.state.dominant == Lang.HI else
-            "Let's pick back up where we left off with your maintenance request."
-        )
+        room = task_state.get("room_number", "")
+        if tracker.state.dominant == Lang.HI:
+            if room:
+                resume_text = f"Welcome back जी! Room {room} की request वहीं से शुरू करते हैं। बताइए आगे क्या दिक्कत आ रही है?"
+            else:
+                resume_text = "Welcome back जी! आपकी maintenance request वहीं से शुरू करते हैं जहाँ हम रुके थे।"
+        else:
+            if room:
+                resume_text = f"Welcome back! Let's continue with your maintenance request for room {room}. What issue are you experiencing?"
+            else:
+                resume_text = "Welcome back! Let's pick back up where we left off with your maintenance request."
         session.say(resume_text)
     else:
         session.say(
