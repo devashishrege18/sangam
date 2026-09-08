@@ -1,0 +1,47 @@
+# Secrets and environment variables
+.env
+*.env
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Testing & DB
+.pytest_cache/
+*.db
+*.sqlite3
+vaiven_sessions.db
+
+# Output audio samples (wav + mp3)
+*.wav
+*.mp3
+
+# IDE
+.vscode/
+.idea/
