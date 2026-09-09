@@ -81,20 +81,21 @@ class RimeSpeaker:
         self.fallback_tts_session = fallback_tts_session
         self.active_provider = "rime"
         self._log: list[SpeakEvent] = []
-        self._cancel_requested: bool = False
+        self._synthesis_generation = 0
 
     def cancel_active_synthesis(self) -> None:
         """Immediately signals the active Rime synthesis stream to abort and drop audio chunks."""
-        self._cancel_requested = True
+        self._synthesis_generation += 1
         logger.info("RimeSpeaker active synthesis cancelled (<200ms truncation).")
 
     async def speak(self, text: str, language_hint: str = DEFAULT_LANGUAGE) -> SpeakEvent:
-        self._cancel_requested = False
+        self._synthesis_generation += 1
+        generation = self._synthesis_generation
         event = SpeakEvent(text=text, provider="rime", model=RIME_MODEL, requested_at=time.time())
         try:
             first_chunk = True
             async for _chunk in self.tts_session.synthesize(text):
-                if self._cancel_requested:
+                if generation != self._synthesis_generation:
                     logger.debug("Discarding remaining Rime audio chunk due to interruption.")
                     break
                 if first_chunk:
@@ -105,7 +106,7 @@ class RimeSpeaker:
             logger.info("RimeSpeaker task cancelled via asyncio.")
             raise
         except Exception as exc:  # noqa: BLE001 — telephony errors are heterogeneous
-            if self._cancel_requested:
+            if generation != self._synthesis_generation:
                 return event
             logger.warning("Rime synthesis failed (%s). Falling back.", exc)
             event.fell_back = True
@@ -114,7 +115,7 @@ class RimeSpeaker:
             if self.fallback_tts_session is not None:
                 first_chunk = True
                 async for _chunk in self.fallback_tts_session.synthesize(text):
-                    if self._cancel_requested:
+                    if generation != self._synthesis_generation:
                         break
                     if first_chunk:
                         event.first_audio_at = time.time()

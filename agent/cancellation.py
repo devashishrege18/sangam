@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from typing import Any, Callable, Coroutine, Set
 
@@ -52,33 +53,62 @@ class InterruptionOrchestrator:
         self.turn_epoch: int = 0
 
         # Active in-flight async tasks
+        self.active_llm_tasks: Set[asyncio.Task] = set()
+        self.active_tts_tasks: Set[asyncio.Task] = set()
+        # Backwards-compatible handles for callers that inspect these fields.
         self.active_llm_task: asyncio.Task | None = None
         self.active_tts_task: asyncio.Task | None = None
         self.active_tool_tasks: Set[asyncio.Task] = set()
+        # Tasks cancelled by the latest interruption remain observable until
+        # wait_for_cancellation() confirms that cancellation reached them.
+        self._recently_cancelled_tasks: Set[asyncio.Task] = set()
+        self._interruption_lock = asyncio.Lock()
+        # Threading lock for atomic epoch-check-then-write in fenced_save_session.
+        # Also guards epoch advancement so an interruption on another thread can't
+        # slip between the epoch check and the store.save() call.
+        self._state_lock = threading.RLock()
 
         # Metrics
         self.last_interruption_latency_ms: float | None = None
+        # Confirmed cancellation latency: measures actual task stop, not just
+        # synchronous handler dispatch. Set by wait_for_cancellation().
+        self.last_confirmed_cancellation_latency_ms: float | None = None
+        # Diagnostic: component-level errors from the last interruption cycle.
+        # Each entry is {"component": str, "error": str}.
+        self.last_cancellation_errors: list[dict[str, Any]] = []
+        self.last_cancellation_succeeded: bool = True
 
     def bind_session(self, session: Any) -> None:
         self.session = session
 
     def register_llm_task(self, task: asyncio.Task) -> None:
+        self.active_llm_tasks.add(task)
         self.active_llm_task = task
+        task.add_done_callback(self.active_llm_tasks.discard)
 
     def register_tts_task(self, task: asyncio.Task) -> None:
+        self.active_tts_tasks.add(task)
         self.active_tts_task = task
+        task.add_done_callback(self.active_tts_tasks.discard)
 
     async def on_user_started_speaking(self, ev: Any = None) -> float:
+        async with self._interruption_lock:
+            return await self._interrupt_locked()
+
+    async def _interrupt_locked(self) -> float:
         """
         Sub-200ms interruption handler triggered by VAD / turn detection.
         Immediately cancels all ongoing agent generation and flushes audio buffers.
         """
         t0 = time.perf_counter()
+        errors: list[dict[str, Any]] = []
 
-        # 1. State Fencing: Increment epoch atomically.
-        # Any task holding a previous epoch is rendered obsolete instantly.
-        self.turn_epoch += 1
-        current_epoch = self.turn_epoch
+        # 1. State Fencing: Increment epoch atomically under _state_lock so that
+        # fenced_save_session() cannot interleave between its epoch check and
+        # store.save() while we are advancing the epoch here.
+        with self._state_lock:
+            self.turn_epoch += 1
+            current_epoch = self.turn_epoch
 
         logger.info(
             "User interruption detected. Advanced turn epoch to %d. Commencing cancellation...",
@@ -91,17 +121,25 @@ class InterruptionOrchestrator:
                 # session.interrupt(force=True) cancels queued speech items and signals playback halt
                 self.session.interrupt(force=True)
             except Exception as e:
+                errors.append({"component": "session.interrupt", "error": str(e)})
                 logger.debug("session.interrupt notice: %s", e)
 
         # 3. Cancel active Rime TTS synthesis handle & discard frames
-        if self.active_tts_task and not self.active_tts_task.done():
-            self.active_tts_task.cancel()
-            self.active_tts_task = None
+        cancelled_tasks = [
+            task for task in self.active_tts_tasks
+            if not task.done()
+        ]
+        self._recently_cancelled_tasks.update(cancelled_tasks)
+        for task in cancelled_tasks:
+            task.cancel()
+        self.active_tts_tasks.clear()
+        self.active_tts_task = None
 
         if self.speaker is not None and hasattr(self.speaker, "cancel_active_synthesis"):
             try:
                 self.speaker.cancel_active_synthesis()
             except Exception as e:
+                errors.append({"component": "speaker.cancel_active_synthesis", "error": str(e)})
                 logger.warning("Error cancelling Rime synthesis: %s", e)
 
         # Flush unplayed audio frame queue
@@ -110,6 +148,7 @@ class InterruptionOrchestrator:
             while not self.audio_frame_queue.empty():
                 try:
                     self.audio_frame_queue.get_nowait()
+                    self.audio_frame_queue.task_done()
                     discarded_frames += 1
                 except (asyncio.QueueEmpty, ValueError):
                     break
@@ -122,28 +161,40 @@ class InterruptionOrchestrator:
                     self.session.output.set_audio_enabled(False)
                     self.session.output.set_audio_enabled(True)
             except Exception as e:
+                errors.append({"component": "output.set_audio_enabled", "error": str(e)})
                 logger.debug("Audio sink flush notice: %s", e)
 
         # 5. State Fencing: Cancel LLM generation task
-        if self.active_llm_task and not self.active_llm_task.done():
-            self.active_llm_task.cancel()
-            self.active_llm_task = None
+        cancelled_tasks = [
+            task for task in self.active_llm_tasks
+            if not task.done()
+        ]
+        self._recently_cancelled_tasks.update(cancelled_tasks)
+        for task in cancelled_tasks:
+            task.cancel()
+        self.active_llm_tasks.clear()
+        self.active_llm_task = None
 
         # 6. State Fencing: Cancel all active asynchronous tool tasks
         running_tools = [t for t in self.active_tool_tasks if not t.done()]
+        self._recently_cancelled_tasks.update(running_tools)
         for tool_task in running_tools:
             tool_task.cancel()
         self.active_tool_tasks.clear()
 
-        # Calculate total latency
+        # Calculate handler dispatch latency (synchronous portion only)
         latency_ms = (time.perf_counter() - t0) * 1000
         self.last_interruption_latency_ms = latency_ms
+        self.last_cancellation_errors = errors
+        self.last_cancellation_succeeded = len(errors) == 0
 
         logger.info(
-            "Interruption finished in %.2f ms (< 200 ms target). Discarded %d queued audio frames. Cancelled %d tool tasks.",
+            "Interruption finished in %.2f ms (< 200 ms target). Discarded %d queued audio frames. "
+            "Cancelled %d tool tasks. Errors: %d.",
             latency_ms,
             discarded_frames,
             len(running_tools),
+            len(errors),
         )
 
         return latency_ms
@@ -202,16 +253,49 @@ class InterruptionOrchestrator:
         Durable SQLite state save with state fence checking.
         If the current epoch differs from expected_epoch, the turn was interrupted
         and this partial/obsolete state is NOT persisted.
+
+        The epoch check and store.save() are performed atomically under
+        _state_lock to prevent an interruption from advancing the epoch between
+        the check and the write (the check-then-save race from Finding 2).
         """
-        if self.turn_epoch != expected_epoch:
-            logger.warning(
-                "Fenced save rejected: epoch %d does not match active epoch %d. State not written.",
-                expected_epoch,
-                self.turn_epoch,
-            )
+        with self._state_lock:
+            if self.turn_epoch != expected_epoch:
+                logger.warning(
+                    "Fenced save rejected: epoch %d does not match active epoch %d. State not written.",
+                    expected_epoch,
+                    self.turn_epoch,
+                )
+                return False
+
+            if self.store is not None:
+                self.store.save(phone_number, call_sid, task_state, language_state_dict)
+                return True
             return False
 
-        if self.store is not None:
-            self.store.save(phone_number, call_sid, task_state, language_state_dict)
-            return True
-        return False
+    async def wait_for_cancellation(self, timeout: float = 0.5) -> float:
+        """
+        Waits for all cancelled tasks to actually terminate, measuring confirmed
+        cancellation latency (as opposed to handler dispatch latency).
+
+        Returns the elapsed time in milliseconds. This gives an end-to-end metric
+        covering the time from wait start until all cancelled tasks are done,
+        addressing Finding 8 (latency metric reliability).
+        """
+        t0 = time.perf_counter()
+        pending = [
+            task for task in self._recently_cancelled_tasks
+            if not task.done()
+        ]
+        if pending:
+            await asyncio.wait(pending, timeout=timeout)
+        self._recently_cancelled_tasks = {
+            task for task in self._recently_cancelled_tasks if not task.done()
+        }
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        self.last_confirmed_cancellation_latency_ms = elapsed_ms
+        logger.info(
+            "Confirmed cancellation latency: %.2f ms (%d tasks awaited).",
+            elapsed_ms,
+            len(pending),
+        )
+        return elapsed_ms

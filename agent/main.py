@@ -272,13 +272,14 @@ class SangamAgent(Agent):
         async def _do_create_ticket():
             await asyncio.sleep(0.05)  # simulate API / DB write
             ticket_id = f"TICK-{int(time.time())}"
-            self.task_state["ticket_id"] = ticket_id
             logger.info("Ticket %s created for unit %s", ticket_id, unit)
             return ticket_id
 
-        return await self.orchestrator.execute_fenced_tool(
+        ticket_id = await self.orchestrator.execute_fenced_tool(
             "create_maintenance_ticket", _do_create_ticket
         )
+        self.task_state["ticket_id"] = ticket_id
+        return ticket_id
 
 
 # ---------------------------------------------------------------------------
