@@ -118,9 +118,10 @@ back within the 3-minute window, and verify on camera that:
 - the language the caller was using before the drop is the language the
   agent resumes in
 
-This is a live-phone-call demonstration, not a unit test, and is captured
-in the submitted demo recording rather than this document — this file
-covers what can be proven by a repeatable, judge-runnable command.
+This is a live demonstration, not a unit test, and is captured
+in the submitted [demo recording on Google Drive](https://drive.google.com/file/d/1yfJjEdk4s_Q2U2iztNj-8qKLy3P4pxMM/view?usp=sharing)
+rather than this document — this file covers what can be proven by a
+repeatable, judge-runnable command.
 
 ## Limitations disclosed
 
