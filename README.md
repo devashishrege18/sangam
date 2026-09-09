@@ -11,6 +11,11 @@ meet — is the name because that's the literal behavior the system is
 built to track and respond to correctly: two languages merging in one
 utterance, not running in parallel lanes.
 
+## Demo Video
+
+- **Video Walkthrough (4m 39s)**: [Watch the Live Demo on Google Drive](https://drive.google.com/file/d/1yfJjEdk4s_Q2U2iztNj-8qKLy3P4pxMM/view?usp=sharing)
+  *(Demonstrates target user problem, live Hinglish code-switching, barge-in truncation under 200ms, active Rime Coda/Taru voice, and session recovery across dropped calls).*
+
 ## The problem
 
 PGs, hostels, and rental flats across Indian cities run maintenance
