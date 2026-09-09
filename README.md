@@ -154,6 +154,7 @@ pytest tests/ -v
   accuracy from real audio**, which is a distinct, unaddressed claim.
 - No SIP trunk failover; a mid-call infra restart drops the call and
   relies on the callback-recovery path, not seamless in-call reconnect.
+- **PSTN Telephony Transport**: Real cellular/PSTN telephony via Twilio was provisioned and scripted (`infra/setup_telephony.py`), but live inbound calling via Indian (+91) numbers requires Twilio's regulatory bundle verification (KYC/DoT review), which takes several weeks. LiveKit's WebRTC audio transport was used to verify all core voice claims, code-switching, barge-in, and dropped-session recoveries in this submission instead.
 - Fallback TTS provider is not wired in this submission
   (`fallback_tts_session=None`) — Rime failures currently raise rather
   than silently degrade. Flagged here per the "make fallbacks visible"
