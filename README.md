@@ -122,6 +122,24 @@ export RIME_API_KEY=your_real_key
 python smoke_test_rime.py
 ```
 
+## Production Hardening & Extended Testing (`hardening-improvements` branch)
+
+To go beyond baseline hackathon requirements, the repository includes a dedicated [`hardening-improvements`](https://github.com/devashishrege18/sangam/tree/hardening-improvements) branch addressing production-grade edge cases in barge-in, async concurrency, and SQLite durability:
+
+1. **Atomic State Fencing (`_state_lock` RLock)**: Guards against check-then-save race conditions if a caller interrupts at the exact millisecond state is written to SQLite.
+2. **Concurrent Interruption Serialization (`asyncio.Lock`)**: Serializes simultaneous VAD turn-detection events, eliminating double epoch advances and hardware toggle thrashing.
+3. **Audio Frame Queue Accounting**: Dispatches `task_done()` for every flushed audio chunk during interruption, preventing `queue.join()` consumer hangs.
+4. **Monotonic Synthesis Generation Counter**: Replaces simple cancellation booleans in `RimeSpeaker` with generation counters to completely prevent audio collisions during rapid caller interruptions.
+5. **Multi-Task Set Tracking & Cleanup**: Tracks all in-flight LLM and TTS tasks in `Set[asyncio.Task]` with automatic `done_callback` cleanup, cancelling all active tasks upon barge-in.
+6. **Cancellation Diagnostics & End-to-End Latency**: Collects component-level error traces (`last_cancellation_errors`) and measures confirmed task termination time (`wait_for_cancellation()`).
+7. **Expanded Test Suite (13 / 13 Passing Tests)**: Adds 6 dedicated concurrency and lock tests in `tests/test_interruption.py` alongside the 7 baseline tests.
+
+To run the extended 13-test suite:
+```bash
+git checkout hardening-improvements
+pytest tests/ -v
+```
+
 ## Known limitations (disclosed, not hidden)
 
 - The language tagger in `main.py::naive_language_tag` uses two signals:
@@ -159,8 +177,10 @@ eval/
   run_eval.py            — runs fixtures against the real LanguageTracker
 tests/
   test_session_recovery.py — pytest suite for the recovery claim
+  test_interruption.py     — pytest suite for task interruption, state fencing & cancellation
 infra/
   twilio_setup.md        — telephony wiring instructions
 smoke_test_rime.py       — standalone Rime API key/voice sanity check
 RIME_EVIDENCE.md         — acceptance test, procedure, results, limitations
 ```
+
