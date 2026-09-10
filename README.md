@@ -39,8 +39,8 @@ Two combined, both from the challenge's suggested directions:
 1. **Multilingual and code-switched speech** — detecting language at the
    clause level (not call level), maintaining a language state that can
    flip mid-conversation, and rendering mixed-language responses as one
-   natural utterance using Rime Arcana's native code-switching, rather
-   than choppily swapping voices.
+   natural utterance using Rime Coda's authentic Indian Hindi voice (Taru)
+   with natural inline Hinglish phrasing, rather than choppily swapping voices.
 2. **Telephony and conversation continuity** — real phone calls drop.
    Session state (task progress + language state) persists per caller
    phone number and resumes on callback within a recovery window, instead

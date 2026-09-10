@@ -5,7 +5,7 @@
 Sangam detects code-switching (a caller mixing Hindi and English within a
 single conversation, including mid-turn) at the clause level, maintains
 per-caller language state that survives a dropped call and callback within
-a 3-minute recovery window, and hands Rime Arcana mixed-language text so a
+a 3-minute recovery window, and hands Rime Coda mixed-language text with Taru so a
 code-switched response is rendered as one natural utterance rather than
 two robotic voice swaps.
 
@@ -143,6 +143,6 @@ repeatable, judge-runnable command.
 - Fallback TTS provider is not implemented in this submission — Rime
   failures currently propagate rather than degrade silently, which is
   disclosed rather than hidden per the event's fallback-visibility rule.
-- Only Hindi and English are exercised; Arcana supports more languages
+- Only Hindi and English are exercised; Rime supports more languages
   than this submission's tagger recognizes.
 - **PSTN Telephony Provisioning**: Real inbound PSTN cellular calling via Twilio was attempted and scripted (`infra/setup_telephony.py`), but provisioning an Indian (+91) DID number requires Twilio's Regulatory Bundle (KYC/DoT) review, which takes several weeks. LiveKit's WebRTC audio transport was used to record the live demo and verify all code-switching, barge-in, and session recovery claims instead.
